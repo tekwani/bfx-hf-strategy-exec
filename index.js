@@ -309,7 +309,6 @@ class LiveStrategyExecution extends EventEmitter {
 
         candle.tf = timeframe
         candle.symbol = symbol
-
         this.strategyState = await onSeedCandle(this.strategyState, candle)
         this.lastCandle = candle
         seededCandles += 1
@@ -386,7 +385,7 @@ class LiveStrategyExecution extends EventEmitter {
 
     const { symbol } = this.strategyState
     data.symbol = symbol
-    debug('recv trade: %j', data)
+    debug('recv trade: %s %j', new Date(data.mts).toLocaleString(), data)
     this.strategyState = await onTrade(this.strategyState, data)
     this.lastTrade = data
 
@@ -439,8 +438,8 @@ class LiveStrategyExecution extends EventEmitter {
       this.lastCandle = data
       this._emitStrategyExecutionResults('candle', data)
     } else if (this.lastCandle.mts < data.mts) {
-      debug('recv candle %j', data)
-      debug('closed candle %j', this.lastCandle)
+      debug('closed candle %s %j', new Date(this.lastCandle.mts).toLocaleString(), this.lastCandle)
+      debug('recv candle %s %j', new Date(data.mts).toLocaleString(), data)
       this.strategyState = await onCandle(this.strategyState, this.lastCandle) // send closed candle data
       this.lastCandle = data // save new candle data
       this._emitStrategyExecutionResults('candle', data)
