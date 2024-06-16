@@ -10,7 +10,7 @@ const PromiseThrottle = require('promise-throttle')
 const debug = require('debug')('bfx:hf:strategy-exec')
 const {
   onSeedCandle, onCandle, onTrade, closeOpenPositions,
-  getPosition
+  getPosition, onOrder
 } = require('bfx-hf-strategy')
 const _generateStrategyResults = require('bfx-hf-strategy/lib/util/generate_strategy_results')
 const { calcRealizedPositionPnl, calcUnrealizedPositionPnl } = require('bfx-hf-strategy/lib/pnl')
@@ -18,10 +18,12 @@ const { calcRealizedPositionPnl, calcUnrealizedPositionPnl } = require('bfx-hf-s
 const EventEmitter = require('events')
 
 const CANDLE_FETCH_LIMIT = 1000
+const CANDLE_FETCH_SECTION = 'hist'
 const pt = new PromiseThrottle({
   requestsPerSecond: 10.0 / 60.0, // taken from docs
   promiseImplementation: Promise
 })
+const ORDER_CLOSE_EVENT = 'auth:oc'
 
 class LiveStrategyExecution extends EventEmitter {
   /**
@@ -44,6 +46,15 @@ class LiveStrategyExecution extends EventEmitter {
 
     this.strategyState = {
       ...strategy,
+      useMaxLeverage: strategyOptions.useMaxLeverage,
+      leverage: strategyOptions.leverage,
+      increaseLeverage: strategyOptions.increaseLeverage,
+      addStopOrder: strategyOptions.addStopOrder,
+      stopOrderPercent: strategyOptions.stopOrderPercent,
+      isDerivative: strategyOptions.isDerivative,
+      maxLeverage: strategyOptions.maxLeverage,
+      baseCurrency: strategyOptions.baseCurrency,
+      quoteCurrency: strategyOptions.quoteCurrency,
       emit: this.emit.bind(this)
     }
 
@@ -138,6 +149,11 @@ class LiveStrategyExecution extends EventEmitter {
       this._enqueueMessage('candle', candle)
     })
 
+    // closed orders
+    this.ws2Manager.onWS(ORDER_CLOSE_EVENT, {}, async (data) => {
+      this._enqueueMessage(ORDER_CLOSE_EVENT, data)
+    })
+
     this.ws2Manager.onWS('open', {}, this._onWSOpen.bind(this))
     this.ws2Manager.onWS('close', {}, this._onWSClose.bind(this))
   }
@@ -193,6 +209,7 @@ class LiveStrategyExecution extends EventEmitter {
     const candles = await this._fetchCandles({
       symbol,
       timeframe,
+      section: CANDLE_FETCH_SECTION,
       query: {
         start: start - (120 * 1000), // 2 min threshold
         end,
@@ -238,6 +255,7 @@ class LiveStrategyExecution extends EventEmitter {
       const candles = await this._fetchCandles({
         symbol,
         timeframe,
+        section: CANDLE_FETCH_SECTION,
         query: {
           limit: CANDLE_FETCH_LIMIT,
           start,
@@ -339,6 +357,13 @@ class LiveStrategyExecution extends EventEmitter {
   /**
    * @private
    */
+  async _processOrderData (data) {
+    this.strategyState = await onOrder(this.strategyState, data)
+  }
+
+  /**
+   * @private
+   */
   async _processCandleData (data) {
     if (data.mts > this.lastPriceFeedUpdate) {
       this.priceFeed.update(data[this.candlePrice], data.mts)
@@ -372,6 +397,11 @@ class LiveStrategyExecution extends EventEmitter {
 
       case 'candle': {
         await this._processCandleData(data)
+        break
+      }
+
+      case ORDER_CLOSE_EVENT: {
+        await this._processOrderData(data)
         break
       }
 
@@ -435,6 +465,13 @@ class LiveStrategyExecution extends EventEmitter {
    */
   generateResults (openPosition = null) {
     return _generateStrategyResults(this.perfManager, this.strategyState, openPosition)
+  }
+
+  /**
+   * @public
+   */
+  setWallets (wallets) {
+    this.strategyState.wallets = wallets
   }
 }
 
